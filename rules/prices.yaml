@@ -1,0 +1,80 @@
+# Data-quality rules for the staged commodity price table.
+# severity: error -> row is quarantined | warn -> row is kept but tagged for review
+
+table: stg_prices
+max_quarantine_pct: 5.0      # fail the run if more than 5% of rows are quarantined
+
+rules:
+  # --- completeness / validity --------------------------------------------
+  - name: date_is_valid
+    type: not_null
+    column: assessment_date
+    description: Assessment date must be a valid ISO date (YYYY-MM-DD).
+
+  - name: price_is_numeric
+    type: not_null
+    column: price
+    description: Price must be present and numeric ('n/a', '' -> NULL in staging).
+
+  - name: commodity_known
+    type: accepted_values
+    column: commodity
+    values: [POWER, GAS]
+
+  - name: hub_known
+    type: accepted_values
+    column: hub
+    values: [DE, NL, THE, TTF]
+
+  - name: currency_is_eur
+    type: accepted_values
+    column: currency
+    values: [EUR]
+
+  - name: unit_is_mwh
+    type: accepted_values
+    column: unit
+    values: [MWh]
+    description: kWh prices are converted in staging; anything else is unknown.
+
+  # --- uniqueness -----------------------------------------------------------
+  - name: one_assessment_per_day_hub
+    type: unique
+    columns: [assessment_date, commodity, hub]
+    where: "assessment_date IS NOT NULL"
+    description: Keeps the first-loaded row; later copies or revisions are quarantined.
+
+  # --- business ranges ------------------------------------------------------
+  - name: gas_price_in_range
+    type: range
+    column: price
+    min: 0
+    max: 500
+    where: "commodity = 'GAS'"
+
+  - name: power_price_in_market_bounds
+    type: range
+    column: price
+    min: -500
+    max: 4000
+    where: "commodity = 'POWER'"
+    description: Approximate European day-ahead auction price bounds. Negative power prices are legitimate.
+
+  # --- statistical anomaly (review, do not drop) ----------------------------
+  - name: price_statistical_outlier
+    type: outlier_zscore
+    column: price
+    group_by: [commodity, hub]
+    threshold: 4
+    severity: warn
+    description: Real market events (e.g. negative power prices) can look like outliers, so these are flagged, not removed.
+
+  # --- table-level ----------------------------------------------------------
+  - name: minimum_volume
+    type: row_count
+    min: 100
+
+  - name: data_is_fresh
+    type: freshness
+    column: assessment_date
+    max_age_days: 3

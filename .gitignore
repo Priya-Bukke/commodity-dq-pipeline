@@ -1,0 +1,6 @@
+__pycache__/
+*.db
+data/
+reports/
+rules/rules_suggested.yaml
+.venv/
